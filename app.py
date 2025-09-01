@@ -77,10 +77,10 @@ def detect_faces(image, face_cascade):
     # More strict parameters to reduce false positives
     faces = face_cascade.detectMultiScale(
         gray, 
-        scaleFactor=1.2,        # Increased from 1.1 - less sensitive
-        minNeighbors=8,         # Increased from 5 - more strict
-        minSize=(80, 80),       # Increased from (30,30) - larger minimum
-        maxSize=(400, 400),     # Added maximum size limit
+        scaleFactor=1.2,
+        minNeighbors=8,
+        minSize=(80, 80),
+        maxSize=(400, 400),
         flags=cv2.CASCADE_SCALE_IMAGE
     )
     
@@ -88,12 +88,10 @@ def detect_faces(image, face_cascade):
     valid_faces = []
     for (x, y, w, h) in faces:
         aspect_ratio = w / h
-        # Face should be roughly square (0.7 to 1.3 ratio)
         if 0.7 <= aspect_ratio <= 1.3:
-            # Also check if face is not too small relative to image
             image_area = image.shape[0] * image.shape[1]
             face_area = w * h
-            if face_area / image_area > 0.01:  # Face should be at least 1% of image
+            if face_area / image_area > 0.01:
                 valid_faces.append((x, y, x+w, y+h))
     
     return valid_faces
@@ -116,23 +114,22 @@ def extract_face_features(image, face_coords):
 def compare_faces(known_features, unknown_features, threshold=0.6):
     """Compare face features using cosine similarity"""
     if known_features is None or unknown_features is None:
-        return False
+        return False, 0.0
     
     dot_product = np.dot(known_features, unknown_features)
     norm_a = np.linalg.norm(known_features)
     norm_b = np.linalg.norm(unknown_features)
     
     if norm_a == 0 or norm_b == 0:
-        return False
+        return False, 0.0
     
     similarity = dot_product / (norm_a * norm_b)
-    return similarity > threshold
+    return similarity > threshold, similarity
 
 def save_attendance_record(student_name, event_name):
     """Save attendance record to file"""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Create attendance record
     record = {
         'student_name': student_name,
         'event_name': event_name,
@@ -140,7 +137,6 @@ def save_attendance_record(student_name, event_name):
         'date': datetime.datetime.now().strftime("%Y-%m-%d")
     }
     
-    # Load existing records or create new
     try:
         with open('attendance_records.json', 'r') as f:
             records = json.load(f)
@@ -149,7 +145,6 @@ def save_attendance_record(student_name, event_name):
     
     records.append(record)
     
-    # Save updated records
     with open('attendance_records.json', 'w') as f:
         json.dump(records, f, indent=2)
 
@@ -166,13 +161,21 @@ def get_attendance_summary(event_name):
 
 # Initialize session state
 if "students" not in st.session_state:
-    st.session_state.students = {}  # Format: {"student_id": {"name": "Name", "features": features}}
+    st.session_state.students = {}
 
 if "current_event" not in st.session_state:
     st.session_state.current_event = ""
 
 if "attendance_today" not in st.session_state:
     st.session_state.attendance_today = []
+
+# Automatically load student data from file on startup
+try:
+    with open("student_database.pkl", "rb") as f:
+        loaded_students = pickle.load(f)
+        st.session_state.students.update(loaded_students)
+except FileNotFoundError:
+    pass  # No student data file exists yet, so continue with empty students dict
 
 # Load face detector
 try:
@@ -210,7 +213,6 @@ with tab1:
     st.header("👥 Student Registration")
     st.info("Register students using webcam or upload photos")
     
-    # Registration method selection
     reg_method = st.radio("Choose registration method:", ["📸 Upload Photo", "📹 Use Webcam"], horizontal=True)
     
     col1, col2 = st.columns(2)
@@ -239,7 +241,10 @@ with tab1:
                             "features": features
                         }
                         
-                        # Display success
+                        # Save student data to file
+                        with open("student_database.pkl", "wb") as f:
+                            pickle.dump(st.session_state.students, f)
+                        
                         result_image = image_array.copy()
                         x1, y1, x2, y2 = face_coords
                         cv2.rectangle(result_image, (x1, y1), (x2, y2), (0, 255, 0), 3)
@@ -261,18 +266,14 @@ with tab1:
             except Exception as e:
                 st.error(f"❌ Error processing image: {str(e)}")
     
-    else:  # Webcam registration
+    else:
         if not student_id or not student_name:
             st.warning("⚠️ Please enter Student ID and Name first!")
         else:
             st.info("📹 Look at the camera and click 'Capture & Register' when ready")
             
-            # Initialize webcam state
             if "webcam_key" not in st.session_state:
                 st.session_state.webcam_key = 0
-            
-            # Store captured frame in a more reliable way
-            captured_image = None
             
             class RegistrationProcessor:
                 def __init__(self):
@@ -283,24 +284,20 @@ with tab1:
                         img = frame.to_ndarray(format="bgr24")
                         rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                         
-                        # Store the latest frame
                         self.latest_frame = rgb_img.copy()
                         
                         faces = detect_faces(rgb_img, face_cascade)
                         
                         for face_coords in faces:
                             x1, y1, x2, y2 = face_coords
-                            
-                            # Only show rectangle if face is reasonably sized
                             face_width = x2 - x1
                             face_height = y2 - y1
                             
-                            if face_width > 60 and face_height > 60:  # Minimum face size
+                            if face_width > 60 and face_height > 60:
                                 cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                                 cv2.putText(img, "Face detected - Ready!", (x1, y1 - 10), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                             else:
-                                # Face too small - don't show as valid
                                 cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 0), 1)
                                 cv2.putText(img, "Too small", (x1, y1 - 10), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
@@ -337,7 +334,6 @@ with tab1:
             with col2:
                 st.markdown("### 📸 Registration")
                 
-                # Check if webcam is playing
                 if webrtc_ctx.video_processor:
                     st.success("✅ Camera active")
                     
@@ -358,15 +354,17 @@ with tab1:
                                                 "features": features
                                             }
                                             
+                                            # Save student data to file
+                                            with open("student_database.pkl", "wb") as f:
+                                                pickle.dump(st.session_state.students, f)
+                                            
                                             st.success(f"✅ {student_name} registered!")
                                             
-                                            # Show captured image
                                             result_image = image_array.copy()
                                             x1, y1, x2, y2 = face_coords
                                             cv2.rectangle(result_image, (x1, y1), (x2, y2), (0, 255, 0), 3)
                                             st.image(result_image, caption=f"Captured: {student_name}", width=250)
                                             
-                                            # Force refresh to show updated student list
                                             time.sleep(1)
                                             st.rerun()
                                         else:
@@ -383,12 +381,10 @@ with tab1:
                 else:
                     st.info("📹 Starting camera...")
                 
-                # Reset camera button if needed
-                if st.button("🔄 Reset Camera", help="Click if camera is not working"):
+                if st.button("🔄 Reset Camera", key="reset_registration_cam", help="Click if camera is not working"):
                     st.session_state.webcam_key += 1
                     st.rerun()
     
-    # Display registered students
     if st.session_state.students:
         st.markdown("### 📋 Registered Students")
         for student_id, data in st.session_state.students.items():
@@ -401,7 +397,6 @@ with tab1:
 with tab2:
     st.header("✅ Take Attendance")
     
-    # Debug mode toggle
     debug_mode = st.checkbox("🔍 Debug Mode (Show detection details)")
     
     if not st.session_state.current_event:
@@ -414,7 +409,6 @@ with tab2:
         if debug_mode:
             st.info(f"📊 Registered students: {len(st.session_state.students)}")
         
-        # Attendance method selection
         att_method = st.radio("Choose attendance method:", ["📸 Upload Photo", "📹 Live Webcam"], horizontal=True)
         
         if att_method == "📸 Upload Photo":
@@ -439,12 +433,10 @@ with tab2:
                                 best_similarity = 0
                                 
                                 for student_id, data in st.session_state.students.items():
-                                    if compare_faces(data["features"], features, threshold=0.5):
-                                        similarity = np.dot(data["features"], features) / \
-                                                   (np.linalg.norm(data["features"]) * np.linalg.norm(features))
-                                        if similarity > best_similarity:
-                                            best_similarity = similarity
-                                            best_match = (student_id, data["name"])
+                                    is_match, similarity = compare_faces(data["features"], features, threshold=0.5)
+                                    if is_match and similarity > best_similarity:
+                                        best_similarity = similarity
+                                        best_match = (student_id, data["name"])
                                 
                                 x1, y1, x2, y2 = face_coords
                                 if best_match:
@@ -477,18 +469,15 @@ with tab2:
                 except Exception as e:
                     st.error(f"Error processing attendance: {str(e)}")
         
-        else:  # Live webcam attendance
+        else:
             st.info("📹 Look at the camera and click 'Mark Attendance' when ready")
             
-            # Initialize attendance webcam state
             if "attendance_webcam_key" not in st.session_state:
                 st.session_state.attendance_webcam_key = 0
             
-            # Initialize attendance session
             if "attendance_session" not in st.session_state:
                 st.session_state.attendance_session = []
             
-            # EXACT SAME PROCESSOR AS REGISTRATION
             class AttendanceProcessor:
                 def __init__(self):
                     self.latest_frame = None
@@ -498,24 +487,20 @@ with tab2:
                         img = frame.to_ndarray(format="bgr24")
                         rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                         
-                        # Store the latest frame (SAME AS REGISTRATION)
                         self.latest_frame = rgb_img.copy()
                         
                         faces = detect_faces(rgb_img, face_cascade)
                         
                         for face_coords in faces:
                             x1, y1, x2, y2 = face_coords
-                            
-                            # SAME size filtering as registration
                             face_width = x2 - x1
                             face_height = y2 - y1
                             
-                            if face_width > 60 and face_height > 60:  # SAME minimum as registration
+                            if face_width > 60 and face_height > 60:
                                 cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                                 cv2.putText(img, "Face detected - Ready!", (x1, y1 - 10), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                             else:
-                                # SAME small face handling as registration
                                 cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 0), 1)
                                 cv2.putText(img, "Too small", (x1, y1 - 10), 
                                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
@@ -533,7 +518,6 @@ with tab2:
             col1, col2 = st.columns([2, 1])
             
             with col1:
-                # SAME webcam setup as registration
                 webrtc_ctx = webrtc_streamer(
                     key=f"attendance_{st.session_state.attendance_webcam_key}",
                     mode=WebRtcMode.SENDRECV,
@@ -553,7 +537,6 @@ with tab2:
             with col2:
                 st.markdown("### 📸 Mark Attendance")
                 
-                # Check if webcam is playing (SAME as registration)
                 if webrtc_ctx.video_processor:
                     st.success("✅ Camera active")
                     
@@ -565,41 +548,32 @@ with tab2:
                                     faces = detect_faces(image_array, face_cascade)
                                     
                                     if faces:
-                                        face_coords = faces[0]  # Use first detected face
+                                        face_coords = faces[0]
                                         features = extract_face_features(image_array, face_coords)
                                         
                                         if features is not None:
-                                            # Find best match
                                             best_match = None
                                             best_similarity = 0
                                             
                                             for student_id, data in st.session_state.students.items():
                                                 is_match, similarity = compare_faces(data["features"], features, threshold=0.4)
-                                                if similarity > best_similarity:
+                                                if is_match and similarity > best_similarity:
                                                     best_similarity = similarity
                                                     best_match = (student_id, data["name"])
                                             
                                             if best_match and best_similarity > 0.3:
                                                 student_id, name = best_match
-                                                
-                                                # Mark attendance
                                                 save_attendance_record(name, st.session_state.current_event)
                                                 current_time = datetime.datetime.now()
-                                                
-                                                # Add to session display
                                                 st.session_state.attendance_session.append((student_id, name, current_time.strftime("%H:%M:%S")))
-                                                
                                                 st.success(f"✅ Attendance marked for {name}!")
                                                 st.balloons()
-                                                
-                                                # Show captured image with recognition
                                                 result_image = image_array.copy()
                                                 x1, y1, x2, y2 = face_coords
                                                 cv2.rectangle(result_image, (x1, y1), (x2, y2), (0, 255, 0), 3)
                                                 cv2.putText(result_image, f"{name} ({best_similarity:.2f})", (x1, y1 - 10), 
                                                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                                                 st.image(result_image, caption=f"Attendance: {name}", width=250)
-                                                
                                             else:
                                                 st.error("❌ Face not recognized! Please register first.")
                                         else:
@@ -616,15 +590,13 @@ with tab2:
                 else:
                     st.info("📹 Starting camera...")
                 
-                # Reset camera button (SAME as registration)
-                if st.button("🔄 Reset Camera", help="Click if camera is not working"):
+                if st.button("🔄 Reset Camera", key="reset_attendance_cam", help="Click if camera is not working"):
                     st.session_state.attendance_webcam_key += 1
                     st.rerun()
                 
-                # Show recent attendance
                 st.markdown("### 📋 Recent Attendance")
                 if st.session_state.attendance_session:
-                    for student_id, name, time in st.session_state.attendance_session[-5:]:  # Show last 5
+                    for student_id, name, time in st.session_state.attendance_session[-5:]:
                         st.markdown(f"""
                         <div style="background-color: #d4edda; padding: 0.5rem; margin: 0.2rem 0; border-radius: 5px; font-size: 12px; color: #333;">
                             ✅ <strong>{name}</strong><br>
@@ -634,7 +606,7 @@ with tab2:
                 else:
                     st.info("No attendance marked yet")
                 
-                if st.button("🔄 Clear Session", help="Clear current session attendance display"):
+                if st.button("🔄 Clear Session", key="clear_attendance_session", help="Clear current session attendance display"):
                     st.session_state.attendance_session = []
                     st.rerun()
 
@@ -650,7 +622,6 @@ with tab3:
             df = pd.DataFrame(records)
             st.markdown(f"**Total Attendance: {len(records)} students**")
             
-            # Display records
             for record in records:
                 st.markdown(f"""
                 <div class="student-list">
@@ -659,7 +630,6 @@ with tab3:
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Download attendance report
             csv = df.to_csv(index=False)
             st.download_button(
                 label="📥 Download Attendance Report (CSV)",
@@ -675,10 +645,12 @@ with tab3:
 with tab4:
     st.header("⚙️ System Management")
     
+    st.info("ℹ️ Student data is automatically saved after each registration and loaded on app startup.")
+    
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("💾 Save Student Data"):
+        if st.button("💾 Save Student Data (Manual)"):
             if st.session_state.students:
                 with open("student_database.pkl", "wb") as f:
                     pickle.dump(st.session_state.students, f)
@@ -687,7 +659,7 @@ with tab4:
                 st.warning("No student data to save")
     
     with col2:
-        if st.button("📂 Load Student Data"):
+        if st.button("📂 Load Student Data (Manual)"):
             try:
                 with open("student_database.pkl", "rb") as f:
                     loaded_students = pickle.load(f)
@@ -701,10 +673,11 @@ with tab4:
         if st.button("🗑️ Clear All Data"):
             st.session_state.students = {}
             st.session_state.attendance_today = []
+            if os.path.exists("student_database.pkl"):
+                os.remove("student_database.pkl")
             st.success("✅ All data cleared!")
             st.rerun()
     
-    # System statistics
     st.markdown("### 📈 System Statistics")
     col1, col2 = st.columns(2)
     
